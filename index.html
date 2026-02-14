@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Nygren Navigator</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐉</text></svg>" />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #1a1028; overflow-x: hidden; }
+    button { font-family: inherit; cursor: pointer; }
+    input, textarea { font-family: inherit; }
+    @keyframes twinkle { 0%,100% { opacity: 0.1; } 50% { opacity: 0.6; } }
+    @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes glowPulse { 0%,100% { box-shadow: 0 0 15px rgba(212,168,67,0.2); } 50% { box-shadow: 0 0 30px rgba(212,168,67,0.4); } }
+    @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+  <script>
+  // ============================================================
+  //  CONFIGURATION — Change this ONE line to your Google Sheet ID
+  //  (The long string of letters/numbers from your Sheet's URL)
+  // ============================================================
+  var SHEET_ID = "19HLZUzhmMo3url4uO_m_521xRfLd2I-S0wkhT4Xfo8g";
+  // ============================================================
+
+  var html = htm.bind(React.createElement);
+  var useState = React.useState;
+  var useEffect = React.useEffect;
+  var useCallback = React.useCallback;
+
+  var CATEGORIES = [
+    { id: "fantasy",   emoji: "\u{1F409}", label: "Fantasy & Magic" },
+    { id: "scifi",     emoji: "\u{1F680}", label: "Science & Space" },
+    { id: "animals",   emoji: "\u{1F43E}", label: "Animals & Nature" },
+    { id: "humor",     emoji: "\u{1F602}", label: "Funny & Silly" },
+    { id: "adventure", emoji: "\u2694\uFE0F", label: "Adventure & Heroes" },
+    { id: "mystery",   emoji: "\u{1F50D}", label: "Mystery & Puzzles" },
+  ];
+
+  // Pre-generate star positions so they don't shift on re-render
+  var STARS = [];
+  for (var i = 0; i < 30; i++) {
+    STARS.push({ key: i, w: Math.random()*3+1, top: Math.random()*100, left: Math.random()*100, opacity: Math.random()*0.4+0.1, dur: Math.random()*3+2, delay: Math.random()*3 });
+  }
+
+  // --- Match category labels from the spreadsheet to our category IDs ---
+  function matchCategories(raw) {
+    if (!raw) return [];
+    var parts = raw.split(",").map(function(s) { return s.trim().toLowerCase(); });
+    var matched = [];
+    CATEGORIES.forEach(function(cat) {
+      parts.forEach(function(p) {
+        if (p && cat.label.toLowerCase().indexOf(p) !== -1 || p.indexOf(cat.label.toLowerCase()) !== -1 || cat.id === p) {
+          if (matched.indexOf(cat.id) === -1) matched.push(cat.id);
+        }
+      });
+    });
+    return matched;
+  }
+
+  // --- Fetch and parse Google Sheet data ---
+  function fetchSheetData(sheetId) {
+    var url = "https://docs.google.com/spreadsheets/d/" + sheetId + "/gviz/tq?tqx=out:csv";
+    return fetch(url)
+      .then(function(res) {
+        if (!res.ok) throw new Error("Could not reach Google Sheet (status " + res.status + ")");
+        return res.text();
+      })
+      .then(function(csvText) {
+        if (csvText.indexOf("<!DOCTYPE") !== -1 || csvText.indexOf("<html") !== -1) {
+          throw new Error("Sheet returned HTML instead of CSV. Make sure the sheet is Published to the web.");
+        }
+        var result = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+        if (!result.data || result.data.length === 0) return { books: [], weeklyPick: null };
+
+        var books = [];
+        var weeklyPick = null;
+
+        result.data.forEach(function(row) {
+          var title = (row["Title"] || "").trim();
+          var author = (row["Author"] || "").trim();
+          if (!title) return;
+
+          var book = {
+            id: title + "-" + author,
+            title: title,
+            author: author,
+            imageUrl: (row["Image URL"] || "").trim(),
+            note: (row["Note"] || "").trim(),
+            categories: matchCategories(row["Categories"] || ""),
+          };
+          books.push(book);
+
+          var wp = (row["Weekly Pick"] || "").trim().toUpperCase();
+          if (wp === "TRUE" || wp === "YES" || wp === "X" || wp === "1") {
+            weeklyPick = book;
+          }
+        });
+
+        return { books: books, weeklyPick: weeklyPick };
+      });
+  }
+
+  // --- Decorative components ---
+  function DragonSilhouette(props) {
+    var s = Object.assign({}, props.style, { transform: props.flip ? "scaleX(-1)" : "none" });
+    return html`<svg viewBox="0 0 200 160" style=${s} fill="currentColor" opacity="0.07">
+      <path d="M30 140 Q20 120 25 100 Q30 80 50 70 Q40 60 45 40 Q50 20 70 15 Q80 10 90 15 Q95 5 110 10 Q120 15 125 25 Q135 20 145 30 Q155 40 150 55 Q160 50 170 60 Q180 70 175 85 Q185 90 180 105 Q175 115 160 120 Q165 130 155 140 Z" />
+    </svg>`;
+  }
+
+  function ScrollBorder(props) {
+    var corners = ["top:0;left:0","top:0;right:0;transform:scaleX(-1)","bottom:0;left:0;transform:scaleY(-1)","bottom:0;right:0;transform:scale(-1)"];
+    return html`<div style=${S.scrollBorder}>
+      ${corners.map(function(c, i) {
+        return html`<svg key=${i} width="30" height="30" viewBox="0 0 30 30" style=${{ position:"absolute", cssText:c, zIndex:2 }}>
+          <path d="M0 0 L30 0 L30 5 Q15 5 10 10 Q5 15 5 30 L0 30 Z" fill="#d4a843" opacity="0.6"/>
+        </svg>`;
+      })}
+      ${props.children}
+    </div>`;
+  }
+
+  // ==========================================
+  //  MAIN APP
+  // ==========================================
+  function NygrenNavigator() {
+    var _view = useState("home");
+    var view = _view[0], setView = _view[1];
+
+    var _books = useState([]);
+    var books = _books[0], setBooks = _books[1];
+
+    var _weeklyPick = useState(null);
+    var weeklyPick = _weeklyPick[0], setWeeklyPick = _weeklyPick[1];
+
+    var _loading = useState(true);
+    var loading = _loading[0], setLoading = _loading[1];
+
+    var _error = useState(null);
+    var error = _error[0], setError = _error[1];
+
+    var _quizAnswer = useState(null);
+    var quizAnswer = _quizAnswer[0], setQuizAnswer = _quizAnswer[1];
+
+    var _matchedBook = useState(null);
+    var matchedBook = _matchedBook[0], setMatchedBook = _matchedBook[1];
+
+    // Fetch data from Google Sheet
+    useEffect(function() {
+      if (SHEET_ID === "YOUR_GOOGLE_SHEET_ID_HERE" || !SHEET_ID) {
+        setError("SETUP_NEEDED");
+        setLoading(false);
+        return;
+      }
+      fetchSheetData(SHEET_ID)
+        .then(function(data) {
+          setBooks(data.books);
+          setWeeklyPick(data.weeklyPick);
+          setLoading(false);
+        })
+        .catch(function(err) {
+          setError(err.message);
+          setLoading(false);
+        });
+    }, []);
+
+    var handleQuizSelect = useCallback(function(categoryId) {
+      setQuizAnswer(categoryId);
+      var matches = books.filter(function(b) { return b.categories && b.categories.indexOf(categoryId) !== -1; });
+      setMatchedBook(matches.length > 0 ? matches[Math.floor(Math.random() * matches.length)] : null);
+      setView("result");
+    }, [books]);
+
+    var goHome = function() { setView("home"); setQuizAnswer(null); setMatchedBook(null); };
+
+    // --- LOADING STATE ---
+    if (loading) {
+      return html`<div style=${S.loadingScreen}>
+        <div style=${S.loadingText}>${"\u2728"} Opening the ancient tome... ${"\u2728"}</div>
+      </div>`;
+    }
+
+    // --- SETUP INSTRUCTIONS ---
+    if (error === "SETUP_NEEDED") {
+      return html`<div style=${S.page}>
+        <div style=${{ maxWidth:"660px", margin:"0 auto", padding:"40px 24px" }}>
+          <${ScrollBorder}>
+            <div style=${{ padding:"36px 28px", textAlign:"center" }}>
+              <p style=${{ fontSize:"52px", marginBottom:"12px" }}>${"\u{1F409}"}</p>
+              <h1 style=${Object.assign({}, S.title, { fontSize:"32px", marginBottom:"8px" })}>The Nygren Navigator</h1>
+              <p style=${{ color:"rgba(244,232,193,0.7)", fontSize:"16px", marginBottom:"28px" }}>Almost ready! Your IT administrator needs to connect a Google Sheet.</p>
+              <div style=${{ textAlign:"left", background:"rgba(212,168,67,0.06)", border:"1px solid rgba(212,168,67,0.15)", borderRadius:"10px", padding:"20px 22px" }}>
+                <h3 style=${{ fontFamily:"'Cinzel',serif", color:"#d4a843", fontSize:"16px", marginBottom:"14px" }}>Setup Steps:</h3>
+                <ol style=${{ color:"rgba(244,232,193,0.75)", fontSize:"15px", lineHeight:"1.8", paddingLeft:"20px" }}>
+                  <li>Create a Google Sheet with columns:<br/><strong style=${{ color:"#d4a843" }}>Title | Author | Image URL | Note | Categories | Weekly Pick</strong></li>
+                  <li>Add your books (put <strong style=${{ color:"#d4a843" }}>TRUE</strong> in "Weekly Pick" for the featured book)</li>
+                  <li>Go to <strong style=${{ color:"#d4a843" }}>File ${"→"} Share ${"→"} Publish to web</strong> and click Publish</li>
+                  <li>Copy the Sheet ID from the URL:<br/><code style=${{ color:"#e8c76a", fontSize:"13px", background:"rgba(0,0,0,0.3)", padding:"3px 8px", borderRadius:"4px" }}>docs.google.com/spreadsheets/d/<strong>THIS_PART</strong>/edit</code></li>
+                  <li>Open <strong style=${{ color:"#d4a843" }}>index.html</strong> and replace <code style=${{ color:"#e8c76a", fontSize:"13px", background:"rgba(0,0,0,0.3)", padding:"3px 8px", borderRadius:"4px" }}>YOUR_GOOGLE_SHEET_ID_HERE</code> with your Sheet ID</li>
+                  <li>Upload to GitHub Pages and you're done!</li>
+                </ol>
+              </div>
+              <p style=${{ color:"rgba(244,232,193,0.4)", fontSize:"13px", marginTop:"18px", fontStyle:"italic" }}>Categories: Fantasy & Magic, Science & Space, Animals & Nature, Funny & Silly, Adventure & Heroes, Mystery & Puzzles</p>
+            </div>
+          <//>
+        </div>
+      </div>`;
+    }
+
+    // --- ERROR STATE ---
+    if (error) {
+      return html`<div style=${S.page}>
+        <div style=${{ maxWidth:"660px", margin:"0 auto", padding:"40px 24px" }}>
+          <${ScrollBorder}>
+            <div style=${{ padding:"36px 28px", textAlign:"center" }}>
+              <p style=${{ fontSize:"48px", marginBottom:"12px" }}>${"\u{1F6E1}\uFE0F"}</p>
+              <h2 style=${S.sectionTitle}>The Navigator encountered a problem</h2>
+              <p style=${{ color:"rgba(244,232,193,0.65)", fontSize:"15px", marginBottom:"16px" }}>${error}</p>
+              <div style=${{ textAlign:"left", background:"rgba(212,168,67,0.06)", border:"1px solid rgba(212,168,67,0.15)", borderRadius:"10px", padding:"16px 18px", marginBottom:"16px" }}>
+                <p style=${{ fontFamily:"'Cinzel',serif", color:"#d4a843", fontSize:"14px", marginBottom:"8px" }}>Troubleshooting:</p>
+                <ul style=${{ color:"rgba(244,232,193,0.6)", fontSize:"14px", lineHeight:"1.8", paddingLeft:"18px" }}>
+                  <li>Is the Google Sheet published to the web? (File ${"→"} Share ${"→"} Publish to web)</li>
+                  <li>Is the Sheet ID correct in index.html?</li>
+                  <li>Is your internet connection working?</li>
+                </ul>
+              </div>
+              <button style=${S.secondaryButton} onClick=${function() { location.reload(); }}>Try Again</button>
+            </div>
+          <//>
+        </div>
+      </div>`;
+    }
+
+    // --- MAIN APP ---
+    return html`<div style=${S.page}>
+      <${DragonSilhouette} style=${{ position:"fixed", top:"5%", left:"-3%", width:"280px", color:"#d4a843" }} />
+      <${DragonSilhouette} style=${{ position:"fixed", bottom:"5%", right:"-3%", width:"240px", color:"#d4a843" }} flip=${true} />
+
+      <div style=${S.starsContainer}>
+        ${STARS.map(function(s) {
+          return html`<div key=${s.key} style=${{
+            position:"absolute", width:s.w+"px", height:s.w+"px", background:"#d4a843",
+            borderRadius:"50%", top:s.top+"%", left:s.left+"%", opacity:s.opacity,
+            animation:"twinkle "+s.dur+"s ease-in-out infinite", animationDelay:s.delay+"s",
+          }} />`;
+        })}
+      </div>
+
+      <div style=${S.container}>
+        <header style=${S.header} onClick=${goHome}>
+          <div style=${S.headerDragonEmoji}>${"\u{1F409}"}</div>
+          <h1 style=${S.title}>The Nygren Navigator</h1>
+          <p style=${S.subtitle}>Your Guide Through Worlds of Wonder</p>
+        </header>
+
+        ${view === "home" && html`<div style=${S.homeContent}>
+          <${ScrollBorder}>
+            <div style=${S.weeklySection}>
+              <h2 style=${S.sectionTitle}>${"\u{1F4DC}"} This Week's Quest</h2>
+              ${weeklyPick && weeklyPick.title ? html`
+                <div style=${S.weeklyCard}>
+                  ${weeklyPick.imageUrl && html`<div style=${S.bookCoverWrap}>
+                    <img src=${weeklyPick.imageUrl} alt=${weeklyPick.title} style=${S.bookCover}
+                      onError=${function(e) { e.target.style.display="none"; }} />
+                  </div>`}
+                  <div style=${S.weeklyInfo}>
+                    <h3 style=${S.bookTitle}>${weeklyPick.title}</h3>
+                    <p style=${S.bookAuthor}>by ${weeklyPick.author}</p>
+                    ${weeklyPick.note && html`<div style=${S.librarianNote}>
+                      <span style=${S.noteLabel}>${"\u{1F409}"} The Navigator says:</span>
+                      <p style=${S.noteText}>"${weeklyPick.note}"</p>
+                    </div>`}
+                  </div>
+                </div>
+              ` : html`<p style=${S.emptyMessage}>The Navigator is preparing this week's quest... Check back soon!</p>`}
+            </div>
+          <//>
+
+          <${ScrollBorder}>
+            <div style=${S.quizCta}>
+              <h2 style=${S.sectionTitle}>${"\u{1F52E}"} Seek the Navigator's Wisdom</h2>
+              <p style=${S.quizCtaText}>Not sure what to read next? Answer a question and discover your next great adventure!</p>
+              <button style=${S.bigButton} onClick=${function() { setView("quiz"); }}
+                onMouseEnter=${function(e) { e.target.style.transform="scale(1.05)"; e.target.style.boxShadow="0 0 30px rgba(212,168,67,0.5)"; }}
+                onMouseLeave=${function(e) { e.target.style.transform="scale(1)"; e.target.style.boxShadow="0 0 15px rgba(212,168,67,0.3)"; }}>
+                ${"\u2728"} Begin Your Quest ${"\u2728"}
+              </button>
+            </div>
+          <//>
+
+          ${books.length > 0 && html`<${ScrollBorder}>
+            <div style=${{ padding:"24px" }}>
+              <h2 style=${S.sectionTitle}>${"\u{1F4DA}"} The Full Library</h2>
+              <div style=${{ display:"flex", flexDirection:"column", gap:"14px" }}>
+                ${books.map(function(book) {
+                  return html`<div key=${book.id} style=${S.libraryItem}>
+                    <div style=${S.libraryItemInner}>
+                      ${book.imageUrl && html`<img src=${book.imageUrl} alt=${book.title} style=${S.libraryThumb}
+                        onError=${function(e) { e.target.style.display="none"; }} />`}
+                      <div style=${{ flex:1, minWidth:"150px" }}>
+                        <strong style=${S.libraryTitle}>${book.title}</strong>
+                        <span style=${S.libraryAuthor}>by ${book.author}</span>
+                        <div style=${S.libraryCategories}>
+                          ${book.categories.map(function(cid) {
+                            var cat = CATEGORIES.find(function(c) { return c.id === cid; });
+                            return cat ? html`<span key=${cid} style=${S.miniChip}>${cat.emoji} ${cat.label}</span>` : null;
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>`;
+                })}
+              </div>
+            </div>
+          <//>`}
+        </div>`}
+
+        ${view === "quiz" && html`<div style=${{ animation:"fadeInUp 0.5s ease" }}>
+          <${ScrollBorder}>
+            <div style=${S.quizSection}>
+              <h2 style=${S.sectionTitle}>${"\u{1F52E}"} Choose Your Path</h2>
+              <p style=${S.quizPrompt}>What sounds like the MOST fun to you?</p>
+              <div style=${S.quizGrid}>
+                ${CATEGORIES.map(function(cat) {
+                  return html`<button key=${cat.id} style=${S.quizOption} onClick=${function() { handleQuizSelect(cat.id); }}
+                    onMouseEnter=${function(e) { e.currentTarget.style.transform="translateY(-4px) scale(1.03)"; e.currentTarget.style.borderColor="#d4a843"; e.currentTarget.style.boxShadow="0 8px 25px rgba(212,168,67,0.3)"; }}
+                    onMouseLeave=${function(e) { e.currentTarget.style.transform="translateY(0) scale(1)"; e.currentTarget.style.borderColor="rgba(212,168,67,0.3)"; e.currentTarget.style.boxShadow="0 4px 15px rgba(0,0,0,0.2)"; }}>
+                    <span style=${S.quizEmoji}>${cat.emoji}</span>
+                    <span style=${S.quizLabel}>${cat.label}</span>
+                  </button>`;
+                })}
+              </div>
+              <button style=${S.backLink} onClick=${goHome}>${"\u2190"} Return to the Nook</button>
+            </div>
+          <//>
+        </div>`}
+
+        ${view === "result" && html`<div style=${{ animation:"fadeInUp 0.5s ease" }}>
+          <${ScrollBorder}>
+            <div style=${S.resultSection}>
+              <h2 style=${S.sectionTitle}>${"\u{1F4D6}"} The Navigator Has Spoken!</h2>
+              ${matchedBook ? html`
+                <div style=${S.resultCard}>
+                  <div style=${S.resultCategoryBadge}>
+                    ${(CATEGORIES.find(function(c) { return c.id===quizAnswer; }) || {}).emoji} ${(CATEGORIES.find(function(c) { return c.id===quizAnswer; }) || {}).label}
+                  </div>
+                  ${matchedBook.imageUrl && html`<div style=${S.resultCoverWrap}>
+                    <img src=${matchedBook.imageUrl} alt=${matchedBook.title} style=${S.resultCover}
+                      onError=${function(e) { e.target.style.display="none"; }} />
+                  </div>`}
+                  <h3 style=${S.resultBookTitle}>${matchedBook.title}</h3>
+                  <p style=${S.resultBookAuthor}>by ${matchedBook.author}</p>
+                  ${matchedBook.note && html`<div style=${S.librarianNote}>
+                    <span style=${S.noteLabel}>${"\u{1F409}"} The Navigator says:</span>
+                    <p style=${S.noteText}>"${matchedBook.note}"</p>
+                  </div>`}
+                </div>
+              ` : html`<div style=${S.noMatch}>
+                <p style=${S.noMatchEmoji}>${"\u{1F5FA}\uFE0F"}</p>
+                <p style=${S.noMatchText}>The Navigator hasn't charted any books in this realm yet! Ask your librarian to add some ${(CATEGORIES.find(function(c) { return c.id===quizAnswer; }) || {}).label} books to the Google Sheet.</p>
+              </div>`}
+              <div style=${S.resultButtons}>
+                <button style=${S.secondaryButton} onClick=${function() { setQuizAnswer(null); setMatchedBook(null); setView("quiz"); }}>${"\u{1F52E}"} Try Again</button>
+                <button style=${S.backLink} onClick=${goHome}>${"\u2190"} Return to the Nook</button>
+              </div>
+            </div>
+          <//>
+        </div>`}
+      </div>
+    </div>`;
+  }
+
+  // ==========================================
+  //  STYLES
+  // ==========================================
+  var S = {
+    page: { minHeight:"100vh", background:"linear-gradient(170deg, #1a1028 0%, #251539 30%, #1c1230 60%, #150e22 100%)", color:"#f4e8c1", fontFamily:"'Crimson Text', Georgia, serif", fontSize:"17px", lineHeight:1.6, position:"relative", overflow:"hidden" },
+    scrollBorder: { border:"3px solid #d4a843", borderRadius:"12px", background:"linear-gradient(135deg, rgba(244,232,193,0.08) 0%, rgba(212,168,67,0.05) 100%)", boxShadow:"0 0 20px rgba(212,168,67,0.15), inset 0 0 30px rgba(0,0,0,0.2)", position:"relative", overflow:"hidden" },
+    starsContainer: { position:"fixed", inset:0, pointerEvents:"none", zIndex:0 },
+    container: { maxWidth:"720px", margin:"0 auto", padding:"20px 20px 60px", position:"relative", zIndex:1 },
+    loadingScreen: { minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"#1a1028", color:"#d4a843", fontFamily:"'Cinzel', serif", fontSize:"20px" },
+    loadingText: { animation:"glowPulse 2s ease-in-out infinite", padding:"20px" },
+    header: { textAlign:"center", padding:"30px 20px 20px", cursor:"pointer", userSelect:"none" },
+    headerDragonEmoji: { fontSize:"52px", marginBottom:"8px", animation:"float 4s ease-in-out infinite", filter:"drop-shadow(0 0 15px rgba(212,168,67,0.4))" },
+    title: { fontFamily:"'Cinzel Decorative','Cinzel',serif", fontSize:"clamp(28px,6vw,42px)", fontWeight:900, color:"#d4a843", textShadow:"0 0 30px rgba(212,168,67,0.3), 0 2px 4px rgba(0,0,0,0.5)", margin:"0 0 6px", letterSpacing:"1px" },
+    subtitle: { fontFamily:"'Cinzel',serif", fontSize:"clamp(14px,3vw,17px)", color:"rgba(244,232,193,0.6)", margin:0, fontWeight:400, letterSpacing:"2px", textTransform:"uppercase" },
+    homeContent: { display:"flex", flexDirection:"column", gap:"24px", animation:"fadeInUp 0.6s ease" },
+    weeklySection: { padding:"28px 24px" },
+    sectionTitle: { fontFamily:"'Cinzel',serif", fontSize:"22px", fontWeight:700, color:"#d4a843", margin:"0 0 18px", textAlign:"center", letterSpacing:"0.5px" },
+    weeklyCard: { display:"flex", gap:"20px", alignItems:"flex-start", flexWrap:"wrap", justifyContent:"center" },
+    bookCoverWrap: { flexShrink:0, animation:"glowPulse 3s ease-in-out infinite", borderRadius:"6px" },
+    bookCover: { width:"140px", maxHeight:"210px", objectFit:"cover", borderRadius:"6px", border:"2px solid rgba(212,168,67,0.4)", boxShadow:"0 8px 25px rgba(0,0,0,0.4)" },
+    weeklyInfo: { flex:1, minWidth:"200px" },
+    bookTitle: { fontFamily:"'Cinzel',serif", fontSize:"20px", fontWeight:700, color:"#f4e8c1", margin:"0 0 4px" },
+    bookAuthor: { fontSize:"15px", color:"rgba(244,232,193,0.6)", margin:"0 0 14px", fontStyle:"italic" },
+    librarianNote: { background:"rgba(212,168,67,0.08)", border:"1px solid rgba(212,168,67,0.2)", borderRadius:"8px", padding:"14px 16px" },
+    noteLabel: { fontFamily:"'Cinzel',serif", fontSize:"13px", fontWeight:600, color:"#d4a843", letterSpacing:"0.5px" },
+    noteText: { margin:"6px 0 0", fontStyle:"italic", fontSize:"16px", color:"rgba(244,232,193,0.85)", lineHeight:1.5 },
+    emptyMessage: { textAlign:"center", color:"rgba(244,232,193,0.5)", fontStyle:"italic", fontSize:"16px", padding:"20px" },
+    quizCta: { padding:"28px 24px", textAlign:"center" },
+    quizCtaText: { fontSize:"16px", color:"rgba(244,232,193,0.7)", margin:"0 0 20px", maxWidth:"400px", marginLeft:"auto", marginRight:"auto" },
+    bigButton: { fontFamily:"'Cinzel',serif", fontSize:"18px", fontWeight:700, color:"#1a1028", background:"linear-gradient(135deg,#d4a843,#e8c76a)", border:"none", borderRadius:"8px", padding:"14px 36px", cursor:"pointer", transition:"all 0.3s ease", boxShadow:"0 0 15px rgba(212,168,67,0.3)", letterSpacing:"0.5px" },
+    quizSection: { padding:"28px 24px", textAlign:"center" },
+    quizPrompt: { fontFamily:"'Cinzel',serif", fontSize:"18px", color:"rgba(244,232,193,0.85)", margin:"0 0 24px" },
+    quizGrid: { display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px,1fr))", gap:"14px", marginBottom:"24px" },
+    quizOption: { display:"flex", flexDirection:"column", alignItems:"center", gap:"8px", padding:"20px 16px", background:"rgba(244,232,193,0.04)", border:"2px solid rgba(212,168,67,0.3)", borderRadius:"10px", transition:"all 0.3s ease", boxShadow:"0 4px 15px rgba(0,0,0,0.2)", color:"#f4e8c1", fontFamily:"'Crimson Text',serif" },
+    quizEmoji: { fontSize:"36px" },
+    quizLabel: { fontFamily:"'Cinzel',serif", fontSize:"14px", fontWeight:600, letterSpacing:"0.3px" },
+    resultSection: { padding:"28px 24px", textAlign:"center" },
+    resultCard: { display:"flex", flexDirection:"column", alignItems:"center", gap:"14px" },
+    resultCategoryBadge: { fontFamily:"'Cinzel',serif", fontSize:"14px", fontWeight:600, color:"#d4a843", background:"rgba(212,168,67,0.1)", border:"1px solid rgba(212,168,67,0.3)", borderRadius:"20px", padding:"6px 18px", letterSpacing:"0.5px" },
+    resultCoverWrap: { animation:"glowPulse 3s ease-in-out infinite", borderRadius:"6px", margin:"8px 0" },
+    resultCover: { width:"160px", maxHeight:"240px", objectFit:"cover", borderRadius:"6px", border:"2px solid rgba(212,168,67,0.4)", boxShadow:"0 8px 30px rgba(0,0,0,0.4)" },
+    resultBookTitle: { fontFamily:"'Cinzel',serif", fontSize:"22px", fontWeight:700, color:"#f4e8c1", margin:0 },
+    resultBookAuthor: { fontSize:"16px", color:"rgba(244,232,193,0.6)", fontStyle:"italic", margin:0 },
+    noMatch: { padding:"30px 20px" },
+    noMatchEmoji: { fontSize:"48px", margin:"0 0 12px" },
+    noMatchText: { fontSize:"16px", color:"rgba(244,232,193,0.7)", maxWidth:"360px", margin:"0 auto" },
+    resultButtons: { display:"flex", flexDirection:"column", alignItems:"center", gap:"12px", marginTop:"20px" },
+    secondaryButton: { fontFamily:"'Cinzel',serif", fontSize:"15px", fontWeight:600, color:"#d4a843", background:"rgba(212,168,67,0.1)", border:"2px solid rgba(212,168,67,0.4)", borderRadius:"8px", padding:"10px 28px", transition:"all 0.3s ease" },
+    backLink: { fontFamily:"'Cinzel',serif", fontSize:"14px", color:"rgba(244,232,193,0.5)", background:"none", border:"none", padding:"8px", letterSpacing:"0.5px" },
+    // Library browse section
+    libraryItem: { borderBottom:"1px solid rgba(212,168,67,0.12)", padding:"12px 0" },
+    libraryItemInner: { display:"flex", gap:"14px", alignItems:"flex-start" },
+    libraryThumb: { width:"50px", height:"70px", objectFit:"cover", borderRadius:"4px", border:"1px solid rgba(212,168,67,0.3)", flexShrink:0 },
+    libraryTitle: { fontFamily:"'Cinzel',serif", fontSize:"16px", color:"#f4e8c1", display:"block", marginBottom:"2px" },
+    libraryAuthor: { fontSize:"13px", color:"rgba(244,232,193,0.5)", fontStyle:"italic", display:"block", marginBottom:"4px" },
+    libraryCategories: { display:"flex", flexWrap:"wrap", gap:"5px" },
+    miniChip: { fontSize:"11px", color:"rgba(212,168,67,0.7)", background:"rgba(212,168,67,0.08)", borderRadius:"12px", padding:"2px 9px" },
+  };
+
+  // ==========================================
+  //  MOUNT
+  // ==========================================
+  ReactDOM.createRoot(document.getElementById("root")).render(html`<${NygrenNavigator} />`);
+  </script>
+</body>
+</html>
